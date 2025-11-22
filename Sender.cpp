@@ -2,13 +2,9 @@
 #include <fstream>
 #include <string>
 #include <windows.h>
+#include "Message.h"
 
 using namespace std;
-
-struct Message {
-    char text[20];
-    bool active;
-};
 
 int main(int argc, char* argv[]) {
     setlocale(LC_ALL, "rus");
@@ -41,66 +37,79 @@ int main(int argc, char* argv[]) {
     cout << "Готов к отправке сообщений" << endl;
 
     while (true) {
-        cout << "\nВведите команду (send - отправить, exit - выйти): ";
-        string command;
-        cin >> command;
+        try {
+            cout << "\nВведите команду (send - отправить, exit - выйти): ";
+            string command;
+            cin >> command;
 
-        if (command == "exit") {
-            break;
-        }
-        else if (command == "send") {
-            string text;
-            cout << "Введите сообщение (до 20 символов): ";
-            cin.ignore();
-            getline(cin, text);
-
-            if (text.length() >= 20) {
-                cout << "Сообщение слишком длинное" << endl;
-                continue;
+            if (command == "exit") {
+                break;
             }
+            else if (command == "send") {
+                string text;
+                cout << "Введите сообщение (до 20 символов): ";
+                cin.ignore();
+                getline(cin, text);
 
-            if (hFileMutex) {
-                WaitForSingleObject(hFileMutex, INFINITE);
-            }
+                if (text.length() >= 20) {
+                    cout << "Сообщение слишком длинное" << endl;
+                    continue;
+                }
 
-            fstream file(filename, ios::binary | ios::in | ios::out);
-            if (!file) {
-                cout << "Ошибка открытия файла " << filename << endl;
-                if (hFileMutex) ReleaseMutex(hFileMutex);
-                continue;
-            }
+                if (hFileMutex) {
+                    WaitForSingleObject(hFileMutex, INFINITE);
+                }
 
-            bool sent = false;
-            for (int i = 0; i < 100; i++) {
-                Message msg;
-                file.seekg(i * sizeof(Message));
-                file.read((char*)&msg, sizeof(Message));
+                try {
+                    fstream file(filename, ios::binary | ios::in | ios::out);
+                    if (!file) {
+                        if (hFileMutex)
+                            ReleaseMutex(hFileMutex);
+                        throw runtime_error("Ошибка открытия файла " + string(filename));
+                    }
 
-                if (!msg.active) {
-                    Message new_msg;
-                    strcpy_s(new_msg.text, text.c_str());
-                    new_msg.active = true;
+                    bool sent = false;
+                    for (int i = 0; i < 100; i++) {
+                        Message msg;
+                        file.seekg(i * sizeof(Message));
+                        file.read((char*)&msg, sizeof(Message));
 
-                    file.seekp(i * sizeof(Message));
-                    file.write((char*)&new_msg, sizeof(Message));
-                    file.flush();
+                        if (!msg.active) {
+                            Message new_msg;
+                            strcpy_s(new_msg.text, text.c_str());
+                            new_msg.active = true;
 
-                    cout << "✓ Сообщение отправлено: " << text << endl;
-                    sent = true;
-                    break;
+                            file.seekp(i * sizeof(Message));
+                            file.write((char*)&new_msg, sizeof(Message));
+                            file.flush();
+
+                            cout << "Сообщение отправлено: " << text << endl;
+                            sent = true;
+                            break;
+                        }
+                    }
+
+                    file.close();
+
+                    if (hFileMutex) {
+                        ReleaseMutex(hFileMutex);
+                    }
+
+                    if (!sent) {
+                        cout << "Файл заполнен. Ожидаю освобождения места..." << endl;
+                        Sleep(2000);
+                    }
+                }
+                catch (const exception& e) {
+                    if (hFileMutex) {
+                        ReleaseMutex(hFileMutex);
+                    }
+                    cout << "Ошибка при работе с файлом: " << e.what() << endl;
                 }
             }
-
-            file.close();
-
-            if (hFileMutex) {
-                ReleaseMutex(hFileMutex);
-            }
-
-            if (!sent) {
-                cout << "Файл заполнен. Ожидаю освобождения места..." << endl;
-                Sleep(2000);
-            }
+        }
+        catch (const exception& e) {
+            cout << "Общая ошибка: " << e.what() << endl;
         }
     }
 

@@ -2,13 +2,9 @@
 #include <fstream>
 #include <string>
 #include <windows.h>
+#include "Message.h"
 
 using namespace std;
-
-struct Message {
-    char text[20];
-    bool active;
-};
 
 int main() {
     setlocale(LC_ALL, "rus");
@@ -45,26 +41,16 @@ int main() {
     for (int i = 0; i < senderCount; i++) {
         string command = "Sender.exe " + filename;
 
-        STARTUPINFOA si;
-        PROCESS_INFORMATION pi;
-        ZeroMemory(&si, sizeof(si));
-        si.cb = sizeof(si);
+        STARTUPINFO si;
+        PROCESS_INFORMATION piApp;
+        ZeroMemory(&si, sizeof(STARTUPINFO));
+        si.cb = sizeof(STARTUPINFO);
 
-        if (CreateProcessA(
-            NULL,
-            (LPSTR)command.c_str(),
-            NULL,
-            NULL,
-            FALSE,
-            CREATE_NEW_CONSOLE,
-            NULL,
-            NULL,
-            &si,
-            &pi
-        )) {
+        if (CreateProcessA(NULL, (LPSTR)command.c_str(), NULL, NULL, FALSE,
+            CREATE_NEW_CONSOLE, NULL, NULL, &si, &piApp)) {
             cout << "Процесс Sender " << i + 1 << " успешно запущен" << endl;
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
+            CloseHandle(piApp.hThread);
+            CloseHandle(piApp.hProcess);
         }
         else {
             DWORD error = GetLastError();
@@ -79,7 +65,6 @@ int main() {
         DWORD result = WaitForSingleObject(hReadyEvent, 5000);
         if (result == WAIT_OBJECT_0) {
             readyCount++;
-            cout << "Готовых процессов: " << readyCount << "/" << senderCount << endl;
             ResetEvent(hReadyEvent);
         }
         else if (result == WAIT_TIMEOUT) {
@@ -89,53 +74,66 @@ int main() {
     }
 
     if (readyCount == senderCount) {
-        cout << "Все процессы Sender готовы к работе!" << endl;
+        cout << "Все процессы Sender готовы к работе" << endl;
     }
     else {
-        cout << "Не все процессы Sender ответили. Продолжаем работу..." << endl;
+        cout << "Не все процессы Sender ответили." << endl;
     }
 
     while (true) {
-        cout << "\nВведите команду (read - прочитать, exit - выйти): ";
-        string command;
-        cin >> command;
+        try {
+            cout << "\nВведите команду (read - прочитать, exit - выйти): ";
+            string command;
+            cin >> command;
 
-        if (command == "exit") {
-            break;
-        }
-        else if (command == "read") {
-            WaitForSingleObject(hFileMutex, INFINITE);
-
-            fstream file(filename, ios::binary | ios::in | ios::out);
-            if (!file) {
-                cout << "Ошибка открытия файла" << endl;
-                ReleaseMutex(hFileMutex);
-                continue;
+            if (command == "exit") {
+                break;
             }
+            else if (command == "read") {
+                WaitForSingleObject(hFileMutex, INFINITE);
 
-            bool found = false;
-            for (int i = 0; i < count; i++) {
-                Message msg;
-                file.seekg(i * sizeof(Message));
-                file.read((char*)&msg, sizeof(Message));
+                try {
+                    fstream file(filename, ios::binary | ios::in | ios::out);
+                    if (!file) {
+                        if (hFileMutex)
+                            ReleaseMutex(hFileMutex);
+                        throw runtime_error("Ошибка открытия файла");
+                    }
 
-                if (msg.active) {
-                    cout << "Получено сообщение: " << msg.text << endl;
-                    msg.active = false;
-                    file.seekp(i * sizeof(Message));
-                    file.write((char*)&msg, sizeof(Message));
-                    found = true;
-                    break;
+                    bool found = false;
+                    for (int i = 0; i < count; i++) {
+                        Message msg;
+                        file.seekg(i * sizeof(Message));
+                        file.read((char*)&msg, sizeof(Message));
+
+                        if (msg.active) {
+                            cout << "Получено сообщение: " << msg.text << endl;
+                            msg.active = false;
+                            file.seekp(i * sizeof(Message));
+                            file.write((char*)&msg, sizeof(Message));
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    file.close();
+                    ReleaseMutex(hFileMutex);
+
+                    if (!found) {
+                        cout << "Нет новых сообщений." << endl;
+                        Sleep(1000);
+                    }
+                }
+                catch (const exception& e) {
+                    if (hFileMutex) {
+                        ReleaseMutex(hFileMutex);
+                    }
+                    cout << "Ошибка: " << e.what() << endl;
                 }
             }
-
-            file.close();
-            ReleaseMutex(hFileMutex);
-
-            if (!found) {
-                cout << "Нет новых сообщений. Ожидаю..." << endl;
-                Sleep(1000);
-            }
+        }
+        catch (const exception& e) {
+            cout << "Общая ошибка: " << e.what() << endl;
         }
     }
 
